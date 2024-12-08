@@ -54,8 +54,6 @@ let observer = new MutationObserver(callback);
 observer.observe(fullboxholder, observerOptions);
 
 var msg_all_arr=document.getElementsByClassName("msg");
-
-
 for (let i = 0; i <msg_all_arr.length; i++) {
 	if (msg_all_arr[i].hasAttribute("data-id")){
 	    	var node=msg_all_arr[i];
