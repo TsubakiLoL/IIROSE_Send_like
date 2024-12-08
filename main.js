@@ -59,7 +59,6 @@ for (let i = 0; i <msg_all_arr.length; i++) {
 	    	var node=msg_all_arr[i];
 	   	var data_id=node.getAttribute("data-id");
 		var uid=data_id.slice(0,13);
-		_alert("解析到UID："+uid);
 		var whoistouccbtn=node.children[0].children[1];
 		whoistouccbtn.addEventListener("click", function () {
 			add_like_btn_by_uid(uid);
