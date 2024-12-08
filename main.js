@@ -31,7 +31,7 @@ function callback (mutationList, observer) {
 		          var node=mutation.addedNodes[i];
 		          if(node.classList.contains("msg") && node.hasAttribute("data-id") ){
 			            var data_id=node.getAttribute("data-id");
-  			          var uid=data_id.slice(0,13);
+  			            let uid=data_id.slice(0,13);
 			            var whoistouccbtn=node.children[0].children[1];
 			            whoistouccbtn.addEventListener("click", function () {
 				              add_like_btn_by_uid(uid);
@@ -53,6 +53,7 @@ var fullboxholder= document.getElementById("msgholder");
 let observer = new MutationObserver(callback);
 
 observer.observe(fullboxholder, observerOptions);
+
 var msg_all_arr=document.getElementsByClassName("msg");
 for (let i = 0; i <msg_all_arr.length; i++) {
 	if (msg_all_arr[i].hasAttribute("data-id")){
@@ -65,4 +66,3 @@ for (let i = 0; i <msg_all_arr.length; i++) {
 		 });
 	}
  }
-init_msg();
