@@ -58,7 +58,7 @@ var msg_all_arr=document.getElementsByClassName("msg");
 
 for (let i = 0; i <msg_all_arr.length; i++) {
 	if (msg_all_arr[i].hasAttribute("data-id")){
-	    	var node=mes_all_arr[i];
+	    	var node=msg_all_arr[i];
 	   	var data_id=node.getAttribute("data-id");
 		var uid=data_id.slice(0,13);
 		_alert("解析到UID："+uid);
