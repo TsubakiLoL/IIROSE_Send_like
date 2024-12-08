@@ -53,24 +53,16 @@ var fullboxholder= document.getElementById("msgholder");
 let observer = new MutationObserver(callback);
 
 observer.observe(fullboxholder, observerOptions);
-function init_msg() {
-    var msg_all_arr = document.getElementsByClassName("msg");
-
-    for (let i = 0; i < msg_all_arr.length; i++) {
-        if (msg_all_arr[i].hasAttribute("data-id")) {
-            var new_node = msg_all_arr[i];
-            var new_data_id = new_node.getAttribute("data-id");
-            var new_uid = new_data_id.slice(0, 13);
-            _alert("解析到UID：" + new_uid);
-
-            var new_whoistouccbtn = new_node.children[0].children[1];
-            // 使用立即执行函数来创建一个闭包，捕获当前的new_uid值
-            (function(uid) {
-                new_whoistouccbtn.addEventListener("click", function() {
-                    add_like_btn_by_uid(uid);
-                });
-            })(new_uid); // 调用立即执行函数，并传入当前的new_uid
-        }
-    }
-}
+var msg_all_arr=document.getElementsByClassName("msg");
+for (let i = 0; i <msg_all_arr.length; i++) {
+	if (msg_all_arr[i].hasAttribute("data-id")){
+	    	var node=msg_all_arr[i];
+	   	var data_id=node.getAttribute("data-id");
+		let uid=data_id.slice(0,13);
+		var whoistouccbtn=node.children[0].children[1];
+		whoistouccbtn.addEventListener("click", function () {
+			add_like_btn_by_uid(uid);
+		 });
+	}
+ }
 init_msg();
