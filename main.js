@@ -47,7 +47,7 @@ function msgBtnClick(...param) {
         			break;
     	 			case 2:
 					console.log("参数长度为2");
-        				let uid=arguments[1][5]
+        				let uid=arguments[1][4]
 					add_like_btn_by_uid(uid)
         			break;
 	        } 
