@@ -1,19 +1,22 @@
-
+function get_liked_user(origin_data){
+	return origin_data.split(">")[16].split('"')[1].split("'");
+}
 
 //通过UID给用户点赞
 function send_like_by_uid(uid){
 	_alert("点赞UID："+uid);
 	socket.send("+*"+uid);
-
 };
+
 
 
 //建立绑定到指定uid的点赞按钮
 function add_like_btn_by_uid(uid){
+
 	console.log("添加点赞按钮"+uid);
 	var selectholderbox = document.getElementById("selectHolderBox");
 	var div=`
-<div id="send_like_div" onmouseenter="Utils.Sound.play(0);" class="selectHolderBoxItem selectHolderBoxItemIcon"><div class="mdi-account-cog" style="font-family:md;font-size:28px;text-align:center;line-height:100px;height:100px;width:100px;position:absolute;top:0;opacity:.7;left:0;"></div>点赞<div id="send_like_touch" class="fullBox whoisTouch3"></div></div>`;
+<div id="send_like_div" onmouseenter="Utils.Sound.play(0);" class="selectHolderBoxItem selectHolderBoxItemIcon"><div class="mdi-account-cog" style="font-family:md;font-size:28px;text-align:center;line-height:100px;height:100px;width:100px;position:absolute;top:0;opacity:.7;left:0;"></div><span id="like_text">点赞</span><div id="send_like_touch" class="fullBox whoisTouch3"></div></div>`;
 	selectholderbox.insertAdjacentHTML('beforeend',div);
 	var send_like_touch=document.getElementById("send_like_touch");
 	send_like_touch.addEventListener("click", function () {
@@ -29,7 +32,8 @@ function printParams(...param) {
         console.log(`参数 ${i}:`, param[i]);
     }
 }
-
+//当前查看的点赞用户的缓存
+var now_add_like_user;
 // 回调函数
 function msgBtnClick(...param) {
 	let type=arguments[0]
@@ -47,8 +51,14 @@ function msgBtnClick(...param) {
         			break;
     	 			case 2:
 					console.log("参数长度为2");
-        				let uid=arguments[1][4]
-					add_like_btn_by_uid(uid)
+					let name=arguments[1][0]
+					if(name==myself){
+						break;
+					}
+                    now_add_like_user=name;
+        			let uid=arguments[1][4];
+					add_like_btn_by_uid(uid);
+                    socket.send("+-"+name)
         			break;
 	        } 
         break;
@@ -59,8 +69,7 @@ function msgBtnClick(...param) {
 // 代理函数
 function proxyFunction(targetFunction, callback) {
     return function(...param) {
-        console.log("代理函数被调用！参数为", param);
-	let return_v=targetFunction.call(this,...param);
+	    let return_v=targetFunction.call(this,...param);
         // 调用回调函数
         callback.call(this,...param);
         return return_v;
@@ -76,5 +85,29 @@ Objs.mapHolder.function.event = proxyFunction(
     msgBtnClick, // 回调函数
 );
 
+function ws_message_get(...param){
+    if (typeof arguments[0]=="string" && arguments[0].startsWith("+1")){
+        var liked_persion=get_liked_user(arguments[0])
+        console.log(liked_persion.toString())
+        console.log(liked_persion.includes(myself).toString())
+        if(liked_persion.includes(myself)){
+            var like_text=document.getElementById("like_text");
+            if(like_text!=null){
+                like_text.textContent="已经赞啦";
+                var button = document.getElementById("send_like_div");
 
-console.log(Objs.mapHolder.function.event==target_function_cache);
+                // 禁用按钮
+                button.dataset.disabled = "true";  // 触发 CSS 样式
+                button.onmouseenter = null; 
+                var touchArea = document.getElementById("send_like_touch");
+                touchArea.style.pointerEvents = "none";  // 冗余保障（CSS 已覆盖）
+                touchArea.onclick = null;  
+                touchArea.dataset.disabled = "true";    
+            }
+        }
+    }
+
+}
+var target_function_cache_ws=socket._onmessage;
+
+socket._onmessage=proxyFunction(ws_message_get,target_function_cache_ws)
