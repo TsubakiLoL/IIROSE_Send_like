@@ -60,7 +60,7 @@ function msgBtnClick(...param) {
                                 break;
                             }
                             add_like_btn_by_uid(this.getAttribute("uid"));
-                            socket.send("+-"+real_name)
+                            socket.send("+-"+real_name.toLowerCase())
                         
 					    }
         			    break;
@@ -72,7 +72,7 @@ function msgBtnClick(...param) {
                         now_add_like_user=name;
         			    let uid=arguments[1][4];
 					    add_like_btn_by_uid(uid);
-                        socket.send("+-"+name)
+                        socket.send("+-"+name.toLowerCase())
         			    break;
 	        } 
         break;
