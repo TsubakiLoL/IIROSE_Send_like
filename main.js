@@ -24,7 +24,16 @@ function add_like_btn_by_uid(uid){
     });
 
 }
-
+function getUsernameByUID(e) {
+    var t = Objs.mapHolder.Assets.userlistUid.indexOf(e);
+    if (-1 < t) {
+      // 成功找到UID时的处理流程
+      var o = Objs.mapHolder.Assets.userlistL[t];
+      return o;
+    }
+    // 未找到用户的降级处理
+    return console.warn("UID not found:" + e), null;
+  }
 
 //打印参数
 function printParams(...param) {
@@ -43,23 +52,28 @@ function msgBtnClick(...param) {
 		case 7:
    			switch(arguments.length) {
      				case 1:
-        				console.log("参数长度为1");
-					console.log(this instanceof Element);
-					if(this instanceof Element && this.hasAttribute("uid")){
-						add_like_btn_by_uid(this.getAttribute("uid"));
-					}
-        			break;
+					    console.log(this instanceof Element);
+					    if(this instanceof Element && this.hasAttribute("uid")){
+						
+                            var real_name=getUsernameByUID(this.getAttribute("uid"))
+                            if(real_name==myself){
+                                break;
+                            }
+                            add_like_btn_by_uid(this.getAttribute("uid"));
+                            socket.send("+-"+real_name)
+                        
+					    }
+        			    break;
     	 			case 2:
-					console.log("参数长度为2");
-					let name=arguments[1][0]
-					if(name==myself){
-						break;
-					}
-                    now_add_like_user=name;
-        			let uid=arguments[1][4];
-					add_like_btn_by_uid(uid);
-                    socket.send("+-"+name)
-        			break;
+					    let name=arguments[1][0]
+					    if(name==myself){
+						    break;
+					    }
+                        now_add_like_user=name;
+        			    let uid=arguments[1][4];
+					    add_like_btn_by_uid(uid);
+                        socket.send("+-"+name)
+        			    break;
 	        } 
         break;
     }
