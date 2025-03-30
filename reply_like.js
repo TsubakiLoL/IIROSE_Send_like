@@ -6970,7 +6970,7 @@
 
     new class iirose_sdk extends window.reifuuPluginCore.REIFUU_Plugin
     {
-        name = '蔷薇SDK';
+        name = '自动回赞';
         versions = '0.0.1';
         depend = {
             core: '0.0.1'
@@ -6978,10 +6978,8 @@
         
         config = {
             // '主要配置': {
-            房间消息事件: this.ctx.schema.boolean().default(true),
-            弹幕消息事件:this.ctx.schema.boolean().default(true),
-            私聊消息事件:this.ctx.schema.boolean().default(true),
-            媒体消息:this.ctx.schema.boolean().default(true),
+            开启: this.ctx.schema.boolean().default(true),
+            附带消息: this.ctx.schema.string().role('')
             //     // b: this.ctx.schema.boolean().default(false),
             //     // c: this.ctx.schema.string(),
             //     // d: this.ctx.schema.string().role('secret')
@@ -6992,6 +6990,7 @@
             //     f: this.ctx.schema.array(Number).default([1, 2, 3, 4, 5]),
             //     g: this.ctx.schema.array(String).default(["12", "34"]),
             // }
+		
 
         };
         url = "https://www.baidu.com";
@@ -7057,126 +7056,7 @@
                 }
                 return messages
             }
-            function processRoomMessage(N) {
-                console.log(N.toString())
-                var oe = N.split("<");
-                var messages = [];
-                for (var ne = oe.length - 1; ne >= 0; ne-=1) {
-                    //获取单个消息切片
-                    let message_raw=oe[ne];
-                    console.log(oe[ne])
-                    let e = oe[ne].split(">");
-                    if (e.length < 11) continue;
-            
-                    // 基础字段解析
-                    let o = e[8]; // 用户ID
-                    let I = e[9].split("'");
-                    let U_raw = I[0]; // 原始权限标识
-                    let y = I[2]; // 用户等级
-                    let Z = I[3] || 0; // 未知字段
-                    let ee = I[4] || ""; // 扩展信息
-                    
-                    // 用户信息
-                    let l = e[6]; // 性别 0-未知 1-男 2-女
-                    let i = e[2]; // 用户名
-                    let s = e[4] || "ffffff"; // 用户名颜色
-                    let r = e[5] || "ffffff"; // 二级颜色
-                    
-                    // 头像处理
-                    let t = "";
-                    if (e[1] && e[1][0] === "#") {
-                        t = getMonsterIcon(e[1].substr(1)); 
-                    } else {
-                        t = avatarconv(e[1]); // 用户头像
-                    }
-            
-                    // 消息内容处理
-                    let a = e[3];
-                    let msg_type = "normal";
-                    if (a[0] === "'" && a[1] !== "*") {
-                        
-                        msg_type = "system";
-                        switch (a[1]) {
-                            case "0": // 玩家移动
-                                msg_type="RoomMove"
-                                break;
-                            case "1":
-                                msg_type="RoomJoin"
-                                break;
-                            case "2": // 房间切换
-                                msg_type = "RoomChange";
-                                a=a.substr(2);
-                                break;
-                            case "3":
-                                msg_type="RoomLeave"
-                                break;
-                            case "4": // 卡牌分享
-                                msg_type = "RoomCard";
-                                break;
-                            case "5": // 玩家退出
-                                a = "玩家退出消息";
-                                break;
-                            default:
-                                a = "系统消息";
-                        }
-                    } else if (a.substr(0, 2) === "'*") {
-                        a = a.substr(2); // 过滤特殊前缀
-                        msg_type = "Special";
-                    }
-            
-                    // 构建消息对象
-                    messages.push({
-                        "uid": o,
-                        "name": i,
-                        "gender": l,
-                        "color": "#" + s,
-                        "role": U_raw,
-                        "level": y,
-                        "avatar": t,
-                        "content": escape2Html(a),
-                        "type": msg_type,
-                        "timestamp": e[0], // 转换为毫秒
-                        "raw": e ,// 保留原始数据
-                        toString:()=>{
-                            var s="";
-
-                            return "id:"+o.toString()+"\n"+
-                                    "name:"+i.toString()+"\n"+
-                                    "gender:"+l.toString()+"\n"+
-                                    "color:"+"#"+s.toString()+"\n"+
-                                    "role:"+U_raw.toString()+"\n"+
-                                    "level:"+y.toString()+"\n"+
-                                    "avatar:"+t.toString()+"\n"+
-                                    "content:"+escape2Html(a).toString()+"\n"+
-                                    "type:"+msg_type.toString()+"\n"+
-                                    "time:"+e[0].toString()+"\n"+
-                                    "raw:"+e.toString()+"\n"
-                        }
-                    });
-                }
-                return messages;
-            }
-            //处理弹幕消息
-            function processDanmakuMessage(N){
-                var oe = N.split("<");
-                var messages = [];
-                for (var ne = oe.length - 1; ne >= 0; ne-=1) {
-                    //获取单个消息切片
-                    let message_raw=oe[ne];
-                    let e = message_raw.split(">");
-                    messages.push({
-                        name:e[2],
-                        content:escape2Html(e[4]),
-                        uid:e[1],
-                        toString:()=>{
-                            return "name:"+e[2]+"\n"+
-                                    "content:"+escape2Html(e[4])+"\n"+
-                                    "uid:"+e[1]+"\n"
-                        }
-                    })
-                }
-                return messages;
-            }
+           
             // 代理函数
             function proxyFunction(targetFunction, callback,call_this) {
                 return function(...param) {
@@ -7188,36 +7068,17 @@
             }
             function ws_message_get(...param){
 
-                //私聊消息前缀
-                if(arguments[0].startsWith('""')){
-                    let messages=processDanmakuMessage(arguments[0].substr(2))
-                    for(var ne = messages.length - 1; ne >= 0; ne-=1){
-                        console.log("收到私聊：\n"+messages[ne].toString())
-                        this.ctx.event.emit(Danmaku,messages[ne])
-                    }
-                    
-                }   
-                //房间消息前缀
-                else if(arguments[0].startsWith('"')){
-                    let messages=processRoomMessage(arguments[0].substr(1))
-                    for(var ne = messages.length - 1; ne >= 0; ne-=1){
-                        console.log("收到房间：\n"+messages[ne].toString())
-                        this.ctx.event.emit(messages[ne].msg_type,messages[ne])
-                    }
-                }
-                //弹幕消息前缀
-                else if(arguments[0].startsWith("=")){
-                    
-                }
+                
                 
                 //获得赞消息
 
-                else if(arguments[0].startsWith("@*")){
+                if(arguments[0].startsWith("@*") && this.value.开启){
                     let messages=processLikeMessage(arguments[0].substr(2))
                     for(var ne = messages.length - 1; ne >= 0; ne-=1){
                        let uid=getUserUIDByName(messages[ne]["name"])
                        if(uid!=null){
-                        window._alert("已经回赞！\n名字:"+messages[ne]["name"]+"\nUID:"+uid)
+			window.socket.send("+*"+uid)
+                        window._alert("已经回赞！\n名字:"+messages[ne]["name"]+"\nUID:"+uid+this.value.附带消息)
                        }
                     }
                 }
@@ -7243,10 +7104,6 @@
         {
         }
 
-
-        processIIROSEMessage(origin_mes){
-
-        }
 
 
 
