@@ -8,10 +8,12 @@ function send_like_by_uid(uid){
 	socket.send("+*"+uid);
 };
 
-
+//当前是否受到是否点赞消息
+var accept_reply＝false
 
 //建立绑定到指定uid的点赞按钮
 function add_like_btn_by_uid(uid){
+ accpt_reply＝false
 
 	console.log("添加点赞按钮"+uid);
 	var selectholderbox = document.getElementById("selectHolderBox");
