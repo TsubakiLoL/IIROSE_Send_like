@@ -9,11 +9,11 @@ function send_like_by_uid(uid){
 };
 
 //当前是否受到是否点赞消息
-var accept_reply＝false;
+var accept_reply=false;
 
 //建立绑定到指定uid的点赞按钮
 function add_like_btn_by_uid(uid){
- accpt_reply＝false;
+	accept_reply=false;
 
 	console.log("添加点赞按钮"+uid);
 	var selectholderbox = document.getElementById("selectHolderBox");
@@ -81,14 +81,27 @@ function msgBtnClick(...param) {
     }
 }
 
-
 // 代理函数
-function proxyFunction(targetFunction, callback) {
+function proxyFunctionEvent(targetFunction, callback) {
     return function(...param) {
-	    let return_v=targetFunction.call(this,...param);
+
+	        targetFunction.call(this,...param);
+
+            return callback.call(this,...param);
+
+    };
+}
+// 代理函数
+function proxyFunctionWS(targetFunction, callback) {
+    return function(...param) {
+        if((!accept_reply) && has_like_btn()){
+            accept_reply=true
+	        return targetFunction.call(this,...param);
+        }
+        else{
         // 调用回调函数
-        callback.call(this,...param);
-        return return_v;
+            return callback.call(this,...param);
+        }
     };
 }
 
@@ -96,11 +109,14 @@ function proxyFunction(targetFunction, callback) {
 var target_function_cache = Objs.mapHolder.function.event;
 
 // 绑定代理函数
-Objs.mapHolder.function.event = proxyFunction(
+Objs.mapHolder.function.event = proxyFunctionEvent(
     target_function_cache, // 原始 Native Code
     msgBtnClick, // 回调函数
 );
-
+function has_like_btn(){
+    var like_text=document.getElementById("send_like_div");
+    return like_text!=null;
+}
 function ws_message_get(...param){
     if (typeof arguments[0]=="string" && arguments[0].startsWith("+1")){
         var liked_persion=get_liked_user(arguments[0])
@@ -126,4 +142,4 @@ function ws_message_get(...param){
 }
 var target_function_cache_ws=socket._onmessage;
 
-socket._onmessage=proxyFunction(ws_message_get,target_function_cache_ws)
+socket._onmessage=proxyFunctionWS(ws_message_get,target_function_cache_ws)
