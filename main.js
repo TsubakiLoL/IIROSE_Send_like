@@ -34,7 +34,7 @@ function getUsernameByUID(e) {
       return o;
     }
     // 未找到用户的降级处理
-    return console.warn("UID not found:" + e), null;
+    return null;
   }
 
 //打印参数
@@ -58,7 +58,8 @@ function msgBtnClick(...param) {
 					    if(this instanceof Element && this.hasAttribute("uid")){
 						
                             var real_name=getUsernameByUID(this.getAttribute("uid"))
-                            if(real_name==myself){
+                            
+                            if(real_name==myself ||real_name==null){
                                 break;
                             }
                             add_like_btn_by_uid(this.getAttribute("uid"));
@@ -68,7 +69,7 @@ function msgBtnClick(...param) {
         			    break;
     	 			case 2:
 					    let name=arguments[1][0]
-					    if(name==myself){
+					    if(name==myself || real_name==null){
 						    break;
 					    }
                         now_add_like_user=name;
