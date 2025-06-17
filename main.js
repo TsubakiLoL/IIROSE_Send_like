@@ -99,9 +99,9 @@ function proxyFunctionWS(targetFunction, callback) {
             
 	        let is_success= targetFunction.call(this,...param);
             if(!is_success){
-                accept_reply=true;
                 return callback.call(this,...param)
             }
+            accept_reply=true;
             return true;
         }
         else{
