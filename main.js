@@ -34,7 +34,7 @@ function getUsernameByUID(e) {
       return o;
     }
     // 未找到用户的降级处理
-    return null;
+    return console.warn("UID not found:" + e), null;
   }
 
 //打印参数
@@ -59,7 +59,7 @@ function msgBtnClick(...param) {
 						
                             var real_name=getUsernameByUID(this.getAttribute("uid"))
                             
-                            if(real_name==myself ||real_name==null){
+                            if(real_name==myself){
                                 break;
                             }
                             add_like_btn_by_uid(this.getAttribute("uid"));
@@ -69,7 +69,7 @@ function msgBtnClick(...param) {
         			    break;
     	 			case 2:
 					    let name=arguments[1][0]
-					    if(name==myself || real_name==null){
+					    if(name==myself){
 						    break;
 					    }
                         now_add_like_user=name;
@@ -96,8 +96,13 @@ function proxyFunctionEvent(targetFunction, callback) {
 function proxyFunctionWS(targetFunction, callback) {
     return function(...param) {
         if((!accept_reply) && has_like_btn()){
-            accept_reply=true
-	        return targetFunction.call(this,...param);
+            
+	        let is_success= targetFunction.call(this,...param);
+            if(!is_success){
+                accept_reply=true;
+                return callback.call(this,...param)
+            }
+            return true;
         }
         else{
         // 调用回调函数
@@ -135,10 +140,13 @@ function ws_message_get(...param){
                 var touchArea = document.getElementById("send_like_touch");
                 touchArea.style.pointerEvents = "none";  // 冗余保障（CSS 已覆盖）
                 touchArea.onclick = null;  
-                touchArea.dataset.disabled = "true";    
+                touchArea.dataset.disabled = "true";  
+                
             }
         }
+        return true;
     }
+    return false;
 
 }
 var target_function_cache_ws=socket._onmessage;
