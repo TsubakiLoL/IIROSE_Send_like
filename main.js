@@ -47,6 +47,9 @@ function printParams(...param) {
 var now_add_like_user;
 // 回调函数
 function msgBtnClick(...param) {
+    // _alert("msgBtnClick被调用");
+    // _alert("this为："+this.toString());
+    // _alert("参数个数为："+arguments.length.toString());
 	let type=arguments[0]
 	printParams(...param)
 	console.log("this为：",this)
@@ -66,6 +69,15 @@ function msgBtnClick(...param) {
                             socket.send("+-"+real_name.toLowerCase())
                         
 					    }
+                        else if(this instanceof Element && this.hasAttribute("data-uid")){
+                            var real_name=getUsernameByUID(this.getAttribute("data-uid"))
+                            if(real_name==myself){
+                                break;
+                            }
+                            add_like_btn_by_uid(this.getAttribute("data-uid"));
+                            socket.send("+-"+real_name.toLowerCase())
+                            
+                        }
         			    break;
     	 			case 2:
 					    let name=arguments[1][0]
