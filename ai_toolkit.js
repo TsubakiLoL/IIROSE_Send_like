@@ -699,8 +699,11 @@
   // 分块提示词：{system} 身份与角色扮演 {/} + {format} 蔷薇花园格式说明 {/}
   function buildSystemPrompt() {
     var identity = getSetting('ai_system_prompt') || 'IIROSE AI助手';
+    var win = getIIROSEWindow();
+    var selfName = (win && win.name) ? String(win.name) : '';
     return '{system}' + '\n' +
       '你是 ' + identity + '，正在IIROSE(蔷薇花园)聊天室中与用户交流。' + '\n' +
+      (selfName ? '你的IIROSE账户用户名是 ' + selfName + '，请以该身份发言。' + '\n' : '') +
       '请以该角色的身份和设定进行角色扮演，使用符合角色设定的语气与语句回复。' + '\n' +
       '若API服务端已为该角色配置了设定，以服务端设定为准。' + '\n' +
       '不要暴露自己是AI或机器人。' + '\n' +
@@ -708,11 +711,11 @@
       BLOCK_END + '\n' +
       '{format}' + '\n' +
       '你收到的对话历史消息中带有身份标记用于区分说话者：' + '\n' +
-      '[用户名: xxx] 表示用户发送的消息，[AI] 表示你之前发送的回复，请据此理解对话内容。' + '\n' +
-      '你回复时禁止输出 [AI]、[用户名: xxx] 这类身份标记，只输出正文；但可以按需正常使用IIROSE的功能格式：' + '\n' +
-      '艾特/提及用户：使用 [*用户名*]，例如 [*朱雀院椿*] 你好呀' + '\n' +
-      '发送图片：使用 [图片链接]，例如 [https://example.com/img.jpg]' + '\n' +
-      '发送markdown：消息以 \\\\\\* 加回车开头，必须换行后从第二行开始写markdown内容；行首用 # 加空格控制字号，井号越多字号越小（例如 # 大标题、## 小标题）' + '\n' +
+      '[用户名: xxx] 表示用户发送的消息，你: xxx 表示你之前发送的回复，请据此理解对话内容。' + '\n' +
+      '你回复时直接输出正文，禁止输出 你:、[用户名: xxx]、[AI] 等任何身份前缀；可以按需正常使用IIROSE的功能格式：' + '\n' +
+      '艾特/提及用户：使用 [*用户名*]，该标记前后都必须各留一个空格与相邻文字隔开，否则不会被识别；例如：你好 [*朱雀院椿*] 很高兴认识你' + '\n' +
+      '发送图片：使用 [图片链接]，该标记前后都必须各留一个空格与相邻文字隔开，否则不会被识别；例如：这张图 [https://example.com/img.jpg] 好看吗' + '\n' +
+      '发送markdown：消息以 \\\\\\* 开头，再加回车换行，从第二行开始写markdown内容；行首用 # 加空格控制字号，井号越多字号越小（例如 # 大标题、## 小标题）。注意：\\\\\\* 是三个反斜杠加上一个星号。' + '\n' +
       BLOCK_END;
   }
 
@@ -736,7 +739,7 @@
     });
     aiChat(buildMessages(kind, key)).then(function (reply) {
       if (!reply) return;
-      pushContext(kind, key, { role: 'assistant', content: '[AI] ' + reply });
+      pushContext(kind, key, { role: 'assistant', content: '你: ' + reply });
       done(reply);
     });
   }
@@ -1256,3 +1259,4 @@
     init();
   }
 })();
+
