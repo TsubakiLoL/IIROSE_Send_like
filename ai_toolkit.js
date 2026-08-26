@@ -405,6 +405,26 @@
       default: 300,
       min: 0,
       max: 3600
+    },
+    ai_context_private_size: {
+      label: '私聊缓存上下文条数(-1不限,0无)',
+      type: 'int',
+      default: 50,
+      min: -1,
+      max: 500
+    },
+    ai_context_room_size: {
+      label: '房间缓存上下文条数(-1不限,0无)',
+      type: 'int',
+      default: 100,
+      min: -1,
+      max: 500
+    },
+    ai_system_prompt: {
+      label: 'AI身份设定（分块提示，{/} 为分隔符）',
+      type: 'text',
+      rows: 3,
+      default: 'IIROSE AI助手'
     }
   };
 
@@ -416,6 +436,7 @@
       case 'boolean':
         return !!v;
       case 'string':
+      case 'text':
         return String(v == null ? '' : v);
       case 'select':
         return def.options && def.options.indexOf(v) !== -1 ? v : def.default;
@@ -507,6 +528,80 @@
   window.iiroseTool.setSetting = setSetting;
   window.iiroseTool.getSettings = getSettings;
 
+  /* ================= 上下文（记忆）系统 ================= */
+  // 私聊：按用户 UID 各自独立上下文；房间：按房间 ID 一个上下文
+  // 每条上下文同时记录用户消息与 AI 自己的回复，并持久化到 localStorage
+  var CONTEXT_KEY = 'iirose_tool_context';
+  var BLOCK_END = '{/}'; // 分块提示分隔符
+
+  var contexts = loadContexts();
+
+  function loadContexts() {
+    var d = { private: {}, room: {} };
+    try {
+      var raw = localStorage.getItem(CONTEXT_KEY);
+      if (raw) {
+        var saved = JSON.parse(raw);
+        if (saved && saved.private) d.private = saved.private;
+        if (saved && saved.room) d.room = saved.room;
+      }
+    } catch (e) { /* 忽略 */ }
+    return d;
+  }
+
+  function saveContexts() {
+    // 限制上下文个数，防止 localStorage 过大
+    try {
+      var pk = Object.keys(contexts.private);
+      if (pk.length > 200) pk.slice(0, pk.length - 200).forEach(function (k) { delete contexts.private[k]; });
+      var rk = Object.keys(contexts.room);
+      if (rk.length > 50) rk.slice(0, rk.length - 50).forEach(function (k) { delete contexts.room[k]; });
+      localStorage.setItem(CONTEXT_KEY, JSON.stringify(contexts));
+    } catch (e) { /* 忽略 */ }
+  }
+
+  // 该类型的最大条数：-1 不限 / 0 无 / N 保留最近 N 条
+  function contextMax(kind) {
+    return kind === 'private' ? getSetting('ai_context_private_size') : getSetting('ai_context_room_size');
+  }
+
+  function pushContext(kind, key, entry) {
+    var max = contextMax(kind);
+    if (max === 0) return; // 无上下文
+    var list = contexts[kind][key] || (contexts[kind][key] = []);
+    list.push(entry);
+    if (max > 0 && list.length > max) {
+      contexts[kind][key] = list.slice(list.length - max);
+    }
+    saveContexts();
+  }
+
+  function getContext(kind, key) {
+    var list = contexts[kind][key] || [];
+    var max = contextMax(kind);
+    if (max === 0) return [];
+    if (max > 0 && list.length > max) return list.slice(list.length - max);
+    return list;
+  }
+
+  function roomContextKey() {
+    var win = getIIROSEWindow();
+    return (win && (win.room || win.rid)) ? String(win.room || win.rid) : 'current';
+  }
+
+  // 清空所有上下文（房间 + 全部私聊用户）
+  function clearContexts() {
+    contexts.private = {};
+    contexts.room = {};
+    saveContexts();
+    debugWrite('ai', { type: 'ai', text: '已清空所有上下文（房间 + 全部私聊）' });
+    return true;
+  }
+
+  window.iiroseTool.getContext = getContext;
+  window.iiroseTool.pushContext = pushContext;
+  window.iiroseTool.clearContexts = clearContexts;
+
   /* ================= AI 自动回复 ================= */
   // 调用 OpenAI 兼容 /chat/completions；错误用 IIROSE 全局 _alert 提示；带超时
 
@@ -584,22 +679,59 @@
       });
   }
 
-  // 处理 AI 自动回复：私聊 / 房间消息按设置触发
+  // 处理 AI 自动回复：私聊 / 房间消息按设置触发，带分块提示词与上下文
   function handleAiAutoReply(m) {
     if (!m || !m.text) return;
     if (m.type === 'private' || m.type === 'private_anon') {
       if (!getSetting('ai_private_reply')) return;
-      debugWrite('ai', { type: 'ai', text: '收到私聊，正在生成回复…' });
-      aiChat([{ role: 'user', content: m.text }]).then(function (reply) {
-        if (reply && m.userId) sendPrivate(m.userId, reply);
+      if (!m.userId) return;
+      replyWithContext('private', m.userId, m.username, m.text, function (reply) {
+        if (reply) sendPrivate(m.userId, reply);
       });
     } else if (m.type === 'room_msg') {
       if (!getSetting('ai_room_reply')) return;
-      debugWrite('ai', { type: 'ai', text: '收到房间消息，正在生成回复…' });
-      aiChat([{ role: 'user', content: m.text }]).then(function (reply) {
+      replyWithContext('room', roomContextKey(), m.username, m.text, function (reply) {
         if (reply) sendRoomMsg(reply);
       });
     }
+  }
+
+  // 分块提示词：{system} 身份 {/} + {format} 格式说明 {/}
+  function buildSystemPrompt() {
+    var identity = getSetting('ai_system_prompt') || 'IIROSE AI助手';
+    return '{system}' + '\n' +
+      '你是 ' + identity + '，一位在IIROSE(蔷薇花园)聊天室中的AI助手。' + '\n' +
+      '请使用简体中文，友好、简洁地回复。' + '\n' +
+      BLOCK_END + '\n' +
+      '{format}' + '\n' +
+      '对话历史中：形如 [用户名: xxx] 的为用户消息，形如 [AI] 的为你自己的回复。' + '\n' +
+      '只输出你的回复内容本身，不要输出任何块标记。' + '\n' +
+      BLOCK_END;
+  }
+
+  // 组装完整消息列表：系统提示 + 历史上下文（含身份前缀）
+  function buildMessages(kind, key) {
+    var msgs = [{ role: 'system', content: buildSystemPrompt() }];
+    getContext(kind, key).forEach(function (e) {
+      msgs.push({ role: e.role, content: e.content });
+    });
+    return msgs;
+  }
+
+  // 带上下文的 AI 对话：记录用户消息 → 请求 → 记录 AI 回复
+  function replyWithContext(kind, key, username, text, done) {
+    var identity = username || '用户';
+    pushContext(kind, key, { role: 'user', content: '[用户名: ' + identity + '] ' + text });
+    debugWrite('ai', {
+      type: 'ai',
+      text: (kind === 'private' ? '私聊' : '房间') + '(' + key + ') 上下文 ' +
+        getContext(kind, key).length + ' 条，正在生成回复…'
+    });
+    aiChat(buildMessages(kind, key)).then(function (reply) {
+      if (!reply) return;
+      pushContext(kind, key, { role: 'assistant', content: '[AI] ' + reply });
+      done(reply);
+    });
   }
 
   window.iiroseTool.aiChat = aiChat;
@@ -713,8 +845,10 @@
       '#' + NS + '_float:hover{box-shadow:0 6px 22px rgba(255,77,126,.6)}',
       '#' + NS + '_float:active{cursor:grabbing;transform:scale(.94)}',
       '#' + NS + '_float.dragging{box-shadow:0 10px 28px rgba(255,77,126,.7);transform:scale(1.05);transition:none}',
-      '#' + NS + '_panel{position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:2147483001;background:#f7f8fc;display:none;flex-direction:column;overflow:hidden;font-family:"Microsoft YaHei","PingFang SC",sans-serif;user-select:text;-webkit-user-select:text}',
+      '#' + NS + '_panel{position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:2147483001;background:#f7f8fc;display:none;flex-direction:column;overflow:hidden;font-family:"Microsoft YaHei","PingFang SC",sans-serif;user-select:text;-webkit-user-select:text;cursor:default}',
       '#' + NS + '_panel.show{display:flex;animation:' + NS + '_fadeIn .25s ease}',
+      '#' + NS + '_panel button,#' + NS + '_panel select{cursor:pointer}',
+      '#' + NS + '_panel input,#' + NS + '_panel textarea,#' + NS + '_panel .' + NS + '_debug{cursor:text}',
       '#' + NS + '_panel.show.out{animation:' + NS + '_fadeOut .2s ease forwards}',
       '@keyframes ' + NS + '_fadeIn{from{opacity:0}to{opacity:1}}',
       '@keyframes ' + NS + '_fadeOut{from{opacity:1}to{opacity:0}}',
@@ -749,7 +883,8 @@
       '#' + NS + '_panel .' + NS + '_setLabel{font-size:13px;color:#333;flex-shrink:0}',
       '#' + NS + '_panel .' + NS + '_setCtrl{flex-shrink:0}',
       '#' + NS + '_panel .' + NS + '_setCtrl input[type="text"],#' + NS + '_panel .' + NS + '_setCtrl input[type="number"],#' + NS + '_panel .' + NS + '_setCtrl select{height:30px;min-width:200px;padding:0 8px;border:1px solid #ddd;border-radius:8px;outline:none;font-size:13px;color:#333}',
-      '#' + NS + '_panel .' + NS + '_setCtrl input[type="checkbox"]{width:18px;height:18px;cursor:pointer}'
+      '#' + NS + '_panel .' + NS + '_setCtrl input[type="checkbox"]{width:18px;height:18px;cursor:pointer}',
+      '#' + NS + '_panel .' + NS + '_setCtrl textarea{min-width:220px;min-height:64px;padding:6px 8px;border:1px solid #ddd;border-radius:8px;outline:none;font-size:13px;color:#333;resize:vertical;white-space:pre-wrap;word-break:break-word;line-height:1.5}'
     ].join('\n');
     var styleEl = document.createElement('style');
     styleEl.id = styleId;
@@ -854,6 +989,7 @@
         '<div class="' + NS + '_view" id="' + NS + '_viewSettings" style="display:none">' +
           '<div class="' + NS + '_setBar">' +
             '<button class="' + NS + '_btn" id="' + NS + '_setBack">‹ 返回</button>' +
+            '<button class="' + NS + '_btn" id="' + NS + '_setClearCtx">清空上下文</button>' +
             '<button class="' + NS + '_btn" id="' + NS + '_setReset">恢复默认</button>' +
           '</div>' +
           '<div class="' + NS + '_setList" id="' + NS + '_setList"></div>' +
@@ -892,6 +1028,10 @@
       resetSettings();
       renderSettings();
     });
+    panel.querySelector('#' + NS + '_setClearCtx').addEventListener('click', function () {
+      clearContexts();
+      showAlert('已清空所有上下文（房间 + 全部私聊）');
+    });
   }
 
   // ===== 设置视图 =====
@@ -904,6 +1044,11 @@
         return '<option value="' + escapeHtml(o) + '">' + escapeHtml(o) + '</option>';
       }).join('');
       return '<select data-key="' + key + '">' + opts + '</select>';
+    }
+    if (def.type === 'text') {
+      var rows = def.rows || 3;
+      var tph = def.placeholder ? ' placeholder="' + escapeHtml(def.placeholder) + '"' : '';
+      return '<textarea data-key="' + key + '" rows="' + rows + '"' + tph + '></textarea>';
     }
     var attr = '';
     if (def.type === 'int' || def.type === 'float') {
@@ -946,6 +1091,9 @@
       } else if (def.type === 'float') {
         el.value = settings[key];
         el.addEventListener('change', function () { setSetting(key, parseFloat(el.value)); });
+      } else if (def.type === 'text') {
+        el.value = settings[key];
+        el.addEventListener('input', function () { setSetting(key, el.value); });
       } else {
         el.value = settings[key];
         el.addEventListener('change', function () { setSetting(key, el.value); });
