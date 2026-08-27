@@ -242,6 +242,7 @@
     if (typeof data === 'string') {
       parseIncoming(data).forEach(function (m) {
         if (isSelfMessage(m)) return; // 排除自己发送的消息
+        if (isBlacklisted(m)) return; // 黑名单：完全不进入上下文、不回复
         if (state.logEnabled) debugWrite('in', m);
         handleAiAutoReply(m); // AI 自动回复（不受调试记录开关影响）
       });
@@ -425,6 +426,18 @@
       type: 'text',
       rows: 3,
       default: 'IIROSE AI助手'
+    },
+    room_blocklist: {
+      label: '不触发房间回复名单(逗号分隔，默认含全部机器人)',
+      type: 'text',
+      rows: 3,
+      default: '艾洛,艾莉,艾瑞,艾薇,艾泽,艾花,艾A,艾B'
+    },
+    blacklist: {
+      label: '黑名单(逗号分隔，完全忽略：不入上下文、不回复)',
+      type: 'text',
+      rows: 3,
+      default: ''
     }
   };
 
@@ -624,7 +637,186 @@
     } catch (e) { /* 忽略 */ }
   }
 
-  // 调用 chat/completions，返回回复文本；失败返回 null 并弹窗
+  // ===== 工具注册表（AI 可调用的函数，Function Calling） =====
+  var toolRegistry = {};
+
+  // 注册工具：{ name, label, description, parameters, run(args) }；自动生成启用开关设置
+  function registerTool(tool) {
+    if (!tool || !tool.name) return tool;
+    toolRegistry[tool.name] = tool;
+    var key = 'tool_' + tool.name;
+    if (!SETTINGS[key]) {
+      SETTINGS[key] = {
+        label: '启用：' + (tool.label || tool.name),
+        type: 'boolean',
+        default: true
+      };
+      if (settings[key] === undefined) settings[key] = true;
+    }
+    return tool;
+  }
+
+  // 生成 OpenAI tools 数组（只包含已启用的工具）
+  function buildTools() {
+    var arr = [];
+    Object.keys(toolRegistry).forEach(function (name) {
+      if (getSetting('tool_' + name) === false) return; // 工具被禁用
+      var t = toolRegistry[name];
+      arr.push({
+        type: 'function',
+        function: {
+          name: t.name,
+          description: t.description,
+          parameters: t.parameters
+        }
+      });
+    });
+    return arr;
+  }
+
+  // 统一分派执行工具，返回 { ok, ... } 结果对象
+  function runTool(name, args) {
+    var t = toolRegistry[name];
+    if (!t || typeof t.run !== 'function') {
+      return { ok: false, error: '未知工具: ' + name };
+    }
+    if (getSetting('tool_' + name) === false) {
+      return { ok: false, error: '工具已禁用: ' + name };
+    }
+    try {
+      return t.run(args || {}) || { ok: true };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  }
+
+  // 恢复持久化的工具开关（注册后调用一次）
+  function syncToolSwitches() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      var saved = JSON.parse(raw);
+      Object.keys(toolRegistry).forEach(function (name) {
+        var key = 'tool_' + name;
+        if (saved[key] !== undefined) settings[key] = !!saved[key];
+        if (settings[key] === undefined) settings[key] = true;
+      });
+    } catch (e) { /* 忽略 */ }
+  }
+
+  // 访问 IIROSE 全局用户表（Objs.mapHolder.Assets）
+  function getAssets() {
+    var win = getIIROSEWindow();
+    var O = (win && win.Objs) ? win.Objs : (typeof Objs !== 'undefined' ? Objs : null);
+    return (O && O.mapHolder && O.mapHolder.Assets) ? O.mapHolder.Assets : null;
+  }
+
+  // 通过用户名找 UID（不区分大小写）
+  function getUIDByUsername(name) {
+    name = String(name == null ? '' : name);
+    try {
+      var Assets = getAssets();
+      var idx = Assets.userlistL.indexOf(name);
+      if (idx > -1) return Assets.userlistUid[idx];
+      for (var i = 0; i < Assets.userlistL.length; i++) {
+        if (String(Assets.userlistL[i]).toLowerCase() === name.toLowerCase()) {
+          return Assets.userlistUid[i];
+        }
+      }
+    } catch (e) { /* 忽略 */ }
+    return null;
+  }
+
+  // 给指定 UID 点赞
+  function sendLike(uid) {
+    var sock = getSocket();
+    if (!sock || !uid) return false;
+    sock.send('+*' + uid);
+    debugWrite('ai', { type: 'ai', text: '已给用户点赞 UID=' + uid });
+    return true;
+  }
+
+  // 给指定用户名点赞（返回执行结果）
+  function likeUser(username) {
+    var uid = getUIDByUsername(username);
+    if (!uid) return { ok: false, error: '未找到用户: ' + username };
+    var ok = sendLike(uid);
+    return { ok: ok, username: username, uid: uid };
+  }
+
+  window.iiroseTool.sendLike = sendLike;
+  window.iiroseTool.likeUser = likeUser;
+  window.iiroseTool.registerTool = registerTool;
+  window.iiroseTool.runTool = runTool;
+
+  // 注册「点赞用户」工具
+  registerTool({
+    name: 'like_user',
+    label: '给用户点赞',
+    description: '给指定的IIROSE用户点赞。当对方要求被点赞、或你希望给对方点赞时调用。',
+    parameters: {
+      type: 'object',
+      properties: {
+        username: { type: 'string', description: '要点赞的用户的IIROSE用户名' }
+      },
+      required: ['username']
+    },
+    run: function (args) {
+      return likeUser(args.username);
+    }
+  });
+
+  // ===== 骰子机器人（房间内置） =====
+  // 向 socket 发送 )@0~7 可召唤房间自带机器人扔骰子，仅房间聊天可用
+  var DICE_ROBOTS = ['艾洛', '艾莉', '艾瑞', '艾薇', '艾泽', '艾花', '艾A', '艾B'];
+
+  // 召唤骰子机器人：robot 传 0~7 编号或机器人名字
+  function rollDice(robot) {
+    var index = -1;
+    if (typeof robot === 'number') {
+      index = robot;
+    } else {
+      var name = String(robot == null ? '' : robot);
+      if (/^\d+$/.test(name)) {
+        index = parseInt(name, 10);
+      } else {
+        for (var i = 0; i < DICE_ROBOTS.length; i++) {
+          if (DICE_ROBOTS[i].toLowerCase() === name.toLowerCase()) { index = i; break; }
+        }
+      }
+    }
+    if (index < 0 || index > 7) {
+      return { ok: false, error: '骰子机器人编号需为 0~7（艾洛~艾B）' };
+    }
+    var sock = getSocket();
+    if (!sock) return { ok: false, error: 'socket 未连接' };
+    sock.send(')@' + index);
+    debugWrite('ai', { type: 'ai', text: '已召唤骰子机器人 ' + DICE_ROBOTS[index] + ' (index=' + index + ')' });
+    return { ok: true, robot: DICE_ROBOTS[index], index: index };
+  }
+
+  window.iiroseTool.rollDice = rollDice;
+
+  // 注册「骰子机器人」工具
+  registerTool({
+    name: 'roll_dice',
+    label: '召唤骰子机器人',
+    description: '召唤IIROSE房间内自带的骰子机器人扔骰子（仅在房间聊天可用）。机器人编号 0~7：0艾洛、1艾莉、2艾瑞、3艾薇、4艾泽、5艾花、6艾A、7艾B。',
+    parameters: {
+      type: 'object',
+      properties: {
+        robot: { type: 'string', description: '骰子机器人编号(0~7)或名字(艾洛/艾莉/艾瑞/艾薇/艾泽/艾花/艾A/艾B)' }
+      },
+      required: ['robot']
+    },
+    run: function (args) {
+      return rollDice(args.robot);
+    }
+  });
+
+  syncToolSwitches(); // 恢复持久化的工具开关
+
+  // 调用 chat/completions，支持函数调用；返回最终回复文本；失败返回 null 并弹窗
   function aiChat(messages) {
     var base = normalizeApiUrl(getSetting('ai_api_url'));
     if (!base) {
@@ -636,38 +828,67 @@
     var timeoutSec = getSetting('ai_timeout');
     if (!(timeoutSec > 0)) timeoutSec = 30;
     var controller = (typeof AbortController === 'function') ? new AbortController() : null;
-    var timer = controller ? setTimeout(function () { controller.abort(); }, timeoutSec * 1000) : null;
-
-    var body = { messages: messages };
-    var model = getSetting('ai_model');
-    if (model) body.model = model;
-
+    var timer = null;
     var headers = { 'Content-Type': 'application/json' };
     var apiKey = getSetting('ai_api_key');
     if (apiKey) headers['Authorization'] = 'Bearer ' + apiKey;
+    var model = getSetting('ai_model');
 
-    var req = {
-      method: 'POST',
-      headers: headers,
-      body: JSON.stringify(body)
-    };
-    if (controller) req.signal = controller.signal;
+    function buildBody(msgs) {
+      var body = { messages: msgs };
+      if (model) body.model = model;
+      if (Object.keys(toolRegistry).length) body.tools = buildTools();
+      return body;
+    }
 
-    return fetch(base + '/chat/completions', req)
-      .then(function (res) {
-        if (timer) clearTimeout(timer);
-        if (!res.ok) {
-          return res.text().then(function (t) {
-            throw new Error('HTTP ' + res.status + (t ? ': ' + t.slice(0, 200) : ''));
-          });
-        }
-        return res.json();
-      })
-      .then(function (json) {
-        var content = json && json.choices && json.choices[0] &&
-          json.choices[0].message && json.choices[0].message.content;
-        return content ? String(content) : '';
-      })
+    // 单次请求；若返回 tool_calls 则执行工具并续一轮
+    function callOnce(msgs) {
+      if (timer) clearTimeout(timer);
+      timer = controller ? setTimeout(function () { controller.abort(); }, timeoutSec * 1000) : null;
+      var req = {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify(buildBody(msgs))
+      };
+      if (controller) req.signal = controller.signal;
+      return fetch(base + '/chat/completions', req)
+        .then(function (res) {
+          if (!res.ok) {
+            return res.text().then(function (t) {
+              throw new Error('HTTP ' + res.status + (t ? ': ' + t.slice(0, 200) : ''));
+            });
+          }
+          return res.json();
+        })
+        .then(function (json) {
+          var choice = json && json.choices && json.choices[0];
+          var msg = choice && choice.message;
+          if (!msg) return '';
+          // 工具调用：统一经 runTool 分派执行，并续一轮得到最终回复
+          if (msg.tool_calls && msg.tool_calls.length) {
+            var nextMsgs = msgs.concat([{
+              role: 'assistant',
+              content: msg.content || null,
+              tool_calls: msg.tool_calls
+            }]);
+            msg.tool_calls.forEach(function (tc) {
+              var name = tc.function && tc.function.name;
+              var args = {};
+              try { args = JSON.parse(tc.function.arguments || '{}'); } catch (e) { /* 忽略 */ }
+              nextMsgs.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                content: JSON.stringify(runTool(name, args))
+              });
+            });
+            if (msgs.length < 60) return callOnce(nextMsgs); // 续一轮
+            return '';
+          }
+          return msg.content ? String(msg.content) : '';
+        });
+    }
+
+    return callOnce(messages)
       .catch(function (err) {
         if (timer) clearTimeout(timer);
         var reason = (err && err.name === 'AbortError')
@@ -677,6 +898,32 @@
         debugWrite('ai', { type: 'ai', text: 'AI 请求失败: ' + reason });
         return null;
       });
+  }
+
+  // 名单匹配：支持用户名或 UID，用户名不区分大小写；listStr 为逗号/空格分隔
+  function inList(m, listStr) {
+    if (!m) return false;
+    var items = String(listStr || '').split(/[,，\s]+/).filter(function (s) { return String(s).trim(); });
+    if (!items.length) return false;
+    var name = String(m.username || '');
+    var uid = String(m.userId || '');
+    return items.some(function (b) {
+      b = String(b).trim();
+      if (!b) return false;
+      // 十六进制形式视为 UID
+      if (/^[0-9a-f]{10,}$/i.test(b)) return uid === b;
+      return name === b || name.toLowerCase() === b.toLowerCase();
+    });
+  }
+
+  // 是否在不触发房间回复名单
+  function isBlockedSender(m) {
+    return inList(m, getSetting('room_blocklist'));
+  }
+
+  // 是否在黑名单（完全忽略：不入上下文、不回复）
+  function isBlacklisted(m) {
+    return inList(m, getSetting('blacklist'));
   }
 
   // 处理 AI 自动回复：私聊 / 房间消息按设置触发，带分块提示词与上下文
@@ -690,19 +937,31 @@
       });
     } else if (m.type === 'room_msg') {
       if (!getSetting('ai_room_reply')) return;
-      replyWithContext('room', roomContextKey(), m.username, m.text, function (reply) {
+      var key = roomContextKey();
+      // 名单账户：消息仍加入上下文供 AI 了解，但不触发回复
+      if (isBlockedSender(m)) {
+        pushContext('room', key, { role: 'user', content: '[用户名: ' + (m.username || '用户') + '] ' + m.text });
+        return;
+      }
+      replyWithContext('room', key, m.username, m.text, function (reply) {
         if (reply) sendRoomMsg(reply);
       });
     }
   }
 
+  // 身份设定块：设定可能含换行，用 {身份设定}...{/} 包裹避免破坏提示词结构
+  function identityBlock() {
+    var identity = getSetting('ai_system_prompt') || 'IIROSE AI助手';
+    return '{身份设定}' + '\n' + identity + '\n' + BLOCK_END;
+  }
+
   // 分块提示词：{system} 身份与角色扮演 {/} + {format} 蔷薇花园格式说明 {/}
   function buildSystemPrompt() {
-    var identity = getSetting('ai_system_prompt') || 'IIROSE AI助手';
     var win = getIIROSEWindow();
     var selfName = (win && win.name) ? String(win.name) : '';
     return '{system}' + '\n' +
-      '你是 ' + identity + '，正在IIROSE(蔷薇花园)聊天室中与用户交流。' + '\n' +
+      '你是如下身份设定所描述的角色，正在IIROSE(蔷薇花园)聊天室中与用户交流。' + '\n' +
+      identityBlock() + '\n' +
       (selfName ? '你的IIROSE账户用户名是 ' + selfName + '，请以该身份发言。' + '\n' : '') +
       '请以该角色的身份和设定进行角色扮演，使用符合角色设定的语气与语句回复。' + '\n' +
       '若API服务端已为该角色配置了设定，以服务端设定为准。' + '\n' +
@@ -712,20 +971,49 @@
       '{format}' + '\n' +
       '你收到的对话历史消息中带有身份标记用于区分说话者：' + '\n' +
       '[用户名: xxx] 表示用户发送的消息，你: xxx 表示你之前发送的回复，请据此理解对话内容。' + '\n' +
-      '你回复时直接输出正文，禁止输出 你:、[用户名: xxx]、[AI] 等任何身份前缀；可以按需正常使用IIROSE的功能格式：' + '\n' +
+      '强调：你的回复必须以正文直接开始，绝对不要以 你: 开头，也不要输出 [用户名: xxx]、[AI] 等任何身份前缀；可以按需正常使用IIROSE的功能格式：' + '\n' +
       '艾特/提及用户：使用 [*用户名*]，该标记前后都必须各留一个空格与相邻文字隔开，否则不会被识别；例如：你好 [*朱雀院椿*] 很高兴认识你' + '\n' +
       '发送图片：使用 [图片链接]，该标记前后都必须各留一个空格与相邻文字隔开，否则不会被识别；例如：这张图 [https://example.com/img.jpg] 好看吗' + '\n' +
-      '发送markdown：消息以 \\\\\\* 开头，再加回车换行，从第二行开始写markdown内容；行首用 # 加空格控制字号，井号越多字号越小（例如 # 大标题、## 小标题）。注意：\\\\\\* 是三个反斜杠加上一个星号。' + '\n' +
+      '发送markdown：消息以 \\\\\\* 加回车开头，必须换行后从第二行开始写markdown内容；行首用 # 加空格控制字号，井号越多字号越小（例如 # 大标题、## 小标题）' + '\n' +
       BLOCK_END;
   }
 
-  // 组装完整消息列表：系统提示 + 历史上下文（含身份前缀）
+  // 组装完整消息列表：系统提示 + 历史上下文 + 长上下文角色提醒
   function buildMessages(kind, key) {
+    var history = getContext(kind, key);
     var msgs = [{ role: 'system', content: buildSystemPrompt() }];
-    getContext(kind, key).forEach(function (e) {
+    history.forEach(function (e) {
       msgs.push({ role: e.role, content: e.content });
     });
+    // 长上下文时在最后一条用户消息前插入角色提醒，防止角色设定被稀释
+    if (history.length >= 6) {
+      var reminder = {
+        role: 'system',
+        content: '（角色提醒：你的身份设定如下：\n' + identityBlock() +
+          '\n无论上述对话多长，请始终保持该身份设定与说话风格；若API服务端已为该角色配置了设定，以服务端设定为准；你的回复以正文直接开头，不得输出 你: 等前缀。）'
+      };
+      var lastIdx = msgs.length - 1;
+      if (msgs[lastIdx] && msgs[lastIdx].role === 'user') {
+        msgs.splice(lastIdx, 0, reminder); // 插到末条用户消息前，保持末条为用户
+      } else {
+        msgs.push(reminder);
+      }
+    }
     return msgs;
+  }
+
+  // 代码级前缀过滤：剥掉回复开头可能出现的 你: / [AI] / [用户名: xxx] 等身份前缀
+  function filterReplyPrefix(reply) {
+    reply = String(reply == null ? '' : reply);
+    for (var i = 0; i < 10; i++) {
+      var before = reply;
+      reply = reply
+        .replace(/^\s*你\s*[:：]\s*/, '')            // 去掉开头 你: / 你：
+        .replace(/^\s*\[AI\]\s*/i, '')               // 去掉开头 [AI]
+        .replace(/^\s*\[用户名:[^\]]*\]\s*/, '');    // 去掉开头 [用户名: xxx]
+      if (reply === before) break;
+    }
+    return reply.trim();
   }
 
   // 带上下文的 AI 对话：记录用户消息 → 请求 → 记录 AI 回复
@@ -738,6 +1026,8 @@
         getContext(kind, key).length + ' 条，正在生成回复…'
     });
     aiChat(buildMessages(kind, key)).then(function (reply) {
+      if (!reply) return;
+      reply = filterReplyPrefix(reply); // 代码级过滤：确保不以 你: 等身份前缀开头
       if (!reply) return;
       pushContext(kind, key, { role: 'assistant', content: '你: ' + reply });
       done(reply);
@@ -889,6 +1179,7 @@
       '#' + NS + '_panel .' + NS + '_test button{height:32px;padding:0 16px;border:none;border-radius:16px;background:#ff4d7e;color:#fff;font-size:13px;cursor:pointer}',
       '#' + NS + '_panel .' + NS + '_setBar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}',
       '#' + NS + '_panel .' + NS + '_setList{display:flex;flex-direction:column;gap:10px}',
+      '#' + NS + '_panel .' + NS + '_setSection{margin:16px 0 4px;font-size:13px;font-weight:600;color:#ff4d7e}',
       '#' + NS + '_panel .' + NS + '_setRow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;background:#fff;border:1px solid #ececf1;border-radius:8px}',
       '#' + NS + '_panel .' + NS + '_setLabel{font-size:13px;color:#333;flex-shrink:0}',
       '#' + NS + '_panel .' + NS + '_setCtrl{flex-shrink:0}',
@@ -1076,8 +1367,14 @@
     var list = panel.querySelector('#' + NS + '_setList');
     if (!list) return;
     var html = '';
+    var toolShown = false;
     Object.keys(SETTINGS).forEach(function (key) {
       var def = SETTINGS[key];
+      // 工具开关集中到「可用工具」区域
+      if (key.indexOf('tool_') === 0 && !toolShown) {
+        html += '<div class="' + NS + '_setSection">可用工具</div>';
+        toolShown = true;
+      }
       html += '<div class="' + NS + '_setRow">' +
         '<div class="' + NS + '_setLabel">' + escapeHtml(def.label) + '</div>' +
         '<div class="' + NS + '_setCtrl">' + controlHtml(key, def) + '</div>' +
